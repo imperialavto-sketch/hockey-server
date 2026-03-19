@@ -208,81 +208,36 @@ app.post("/api/parent/mobile/auth/send-code", handleRequestCode);
 app.post("/api/parent/mobile/auth/verify", async (req, res) => {
   try {
     const { phone, code } = req.body || {};
-    console.log("[verify] in", { phone, code: code ? "***" : "(empty)" });
+    const normalizedCode = code != null ? String(code).trim() : "";
+
+    const isDevAuthVerify = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH === "true";
+    if (isDevAuthVerify && normalizedCode === "1234") {
+      const normalizedPhone = normalizePhone(phone);
+      if (!normalizedPhone) {
+        return res.status(400).json({ error: "Введите номер телефона" });
+      }
+      const parentId = `parent-${normalizedPhone}`;
+      let parent = await prisma.parent.findUnique({ where: { id: parentId } });
+      if (!parent) {
+        parent = await prisma.parent.create({
+          data: { id: parentId, phone: normalizedPhone },
+        });
+      }
+      const token = `dev-token-${parentId}`;
+      return res.json({
+        ok: true,
+        token,
+        user: { id: parent.id, role: "parent" },
+        parent,
+      });
+    }
 
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: "Введите номер телефона" });
     }
-    console.log("[verify] normalizedPhone:", normalizedPhone, "isDevAuth:", isDevAuth);
-
-    if (!code || String(code).trim() === "") {
+    if (!normalizedCode) {
       return res.status(400).json({ error: "Введите код подтверждения" });
-    }
-
-    const normalizedCode = String(code).trim();
-    console.log("[verify] normalizedCode:", normalizedCode);
-
-    if (isDevAuth && normalizedCode === "1234") {
-      const parentId = `parent-${normalizedPhone}`;
-      let resolvedParent = await prisma.parent.findFirst({
-        where: { phone: normalizedPhone },
-        orderBy: { createdAt: "desc" },
-      });
-      console.log("[verify] dev branch, parent found by phone:", !!resolvedParent);
-
-      if (!resolvedParent) {
-        try {
-          resolvedParent = await prisma.parent.upsert({
-            where: { id: parentId },
-            update: { phone: normalizedPhone },
-            create: {
-              id: parentId,
-              phone: normalizedPhone,
-              name: "Parent",
-            },
-          });
-          console.log("[verify] parent created:", resolvedParent.id);
-        } catch (upsertErr) {
-          console.error("[verify] parent upsert failed:", upsertErr?.message ?? String(upsertErr));
-          resolvedParent = await prisma.parent.findFirst({
-            where: { id: parentId },
-          });
-          if (!resolvedParent) throw upsertErr;
-          console.log("[verify] parent recovered by id:", resolvedParent.id);
-        }
-        const existingPlayer = await prisma.player.findFirst({
-          where: { parentId: resolvedParent.id },
-        });
-        if (!existingPlayer) {
-          await prisma.player.create({
-            data: {
-              id: `player-${normalizedPhone}`,
-              parentId: resolvedParent.id,
-              name: "Голыш Марк",
-              position: "Forward",
-              team: "Hockey ID",
-              age: 12,
-              games: 60,
-              goals: 22,
-              assists: 38,
-              points: 60,
-            },
-          });
-          console.log("[verify] player created for parent:", resolvedParent.id);
-        }
-      }
-
-      const token = `dev-token-parent-${normalizedPhone}`;
-      const user = {
-        id: resolvedParent.id,
-        phone: resolvedParent.phone ?? normalizedPhone,
-        name: resolvedParent.name ?? null,
-        role: "PARENT",
-        email: null,
-      };
-      console.log("[verify] success, token generated");
-      return res.json({ token, user, parent: { id: resolvedParent.id, phone: resolvedParent.phone ?? normalizedPhone } });
     }
 
     const now = new Date();
@@ -365,8 +320,7 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     const token = `dev-token-parent-${normalizedPhone}`;
     return res.json({ user, token });
   } catch (err) {
-    console.error("[verify] catch - error.message:", err?.message ?? String(err));
-    console.error("[verify] catch - full error:", err);
+    console.error("[verify] error:", err?.message ?? String(err));
     return res.status(500).json({ error: "Не удалось выполнить вход" });
   }
 });
