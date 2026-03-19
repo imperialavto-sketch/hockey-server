@@ -153,18 +153,17 @@ function normalizePhone(phone) {
 const isDevAuth = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH === "true";
 
 async function handleRequestCode(req, res) {
+  const isDevAuthSend = process.env.DEV_AUTH === "true" || process.env.NODE_ENV !== "production";
+  if (isDevAuthSend) {
+    return res.json({ ok: true, success: true, debugCode: "1234" });
+  }
+
   try {
     const { phone } = req.body || {};
 
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: "Введите номер телефона" });
-    }
-
-    // Dev auth: never touch SMS, return immediately
-    if (isDevAuth) {
-      console.log("[hockey-server][request-code] dev mode, phone:", normalizedPhone, "code: 1234");
-      return res.json({ ok: true, success: true, debugCode: "1234" });
     }
 
     const code = String(require("crypto").randomInt(1000, 10000)); // 4-digit, never "0000"
@@ -206,12 +205,12 @@ app.post("/api/parent/mobile/auth/request-code", handleRequestCode);
 app.post("/api/parent/mobile/auth/send-code", handleRequestCode);
 
 app.post("/api/parent/mobile/auth/verify", async (req, res) => {
-  try {
-    const { phone, code } = req.body || {};
-    const normalizedCode = code != null ? String(code).trim() : "";
+  const { phone, code } = req.body || {};
+  const normalizedCode = code != null ? String(code).trim() : "";
+  const isDevAuthVerify = process.env.DEV_AUTH === "true" || process.env.NODE_ENV !== "production";
 
-    const isDevAuthVerify = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH === "true";
-    if (isDevAuthVerify && normalizedCode === "1234") {
+  if (isDevAuthVerify && normalizedCode === "1234") {
+    try {
       const normalizedPhone = normalizePhone(phone);
       if (!normalizedPhone) {
         return res.status(400).json({ error: "Введите номер телефона" });
@@ -230,8 +229,13 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
         user: { id: parent.id, role: "parent" },
         parent,
       });
+    } catch (err) {
+      console.error("[verify] dev auth error:", err?.message ?? err);
+      return res.status(500).json({ error: "Не удалось выполнить вход" });
     }
+  }
 
+  try {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: "Введите номер телефона" });
