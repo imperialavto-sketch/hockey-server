@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HealthcheckRecord {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Parent {
+  id        String   @id
+  phone     String?  @unique
+  name      String?
+  players   Player[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Player {
+  id        String   @id
+  parentId  String
+  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  name      String
+  position  String?
+  team      String?
+  age       Int?
+  games     Int?
+  goals     Int?
+  assists   Int?
+  points    Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  parentId           String   @unique
+  planCode           String
+  status             String
+  billingInterval    String
+  currentPeriodStart String
+  currentPeriodEnd   String
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model SubscriptionBillingRecord {
+  id             String   @id @default(cuid())
+  parentId       String
+  subscriptionId String
+  amount         String
+  currency       String
+  status         String
+  billedAt       String
+  createdAt      DateTime @default(now())
+}
+
+model SubscriptionPlan {
+  id            String   @id
+  code          String   @unique
+  name          String
+  priceMonthly Int      @default(0)
+  priceYearly  Int      @default(0)
+  features      Json?
+  badge         String   @default("Demo")
+  popular       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+model ScheduleEvent {
+  id        String   @id
+  title     String?
+  startTime DateTime
+  location  String?
+  teamId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([startTime])
+}
+
+model TrainingEvent {
+  id        String   @id
+  title     String?
+  startTime DateTime
+  location  String?
+  teamId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([startTime])
+}
+
+model Coach {
+  id             String   @id
+  name           String
+  specialization String?
+  rating         Float?
+  priceFrom      Int?
+  city           String?
+  avatar         String?
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  slots            CoachSlot[]
+  bookingRequests  BookingRequest[]
+}
+
+model CoachSlot {
+  id        String   @id @default(cuid())
+  coachId   String
+  coach     Coach    @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  time      String
+  available Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([coachId])
+}
+
+model BookingRequest {
+  id        String   @id
+  coachId   String
+  coach     Coach    @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([coachId])
+}
+
+model ParentAuthCode {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone, code])
+}
+
+model FeedPost {
+  id            String   @id
+  teamId        String?
+  teamName      String?
+  authorId      String?
+  authorName    String?
+  authorRole    String?
+  type          String?
+  title         String?
+  body          String?
+  imageUrl      String?
+  isPinned      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  publishedAt   DateTime?
+
+  @@index([isPinned, createdAt])
+}
+
+model ChatConversation {
+  id           String   @id
+  playerId     String
+  playerName   String
+  coachId      String
+  coachName    String
+  parentId     String
+  lastMessage  String?
+  updatedAt    DateTime @updatedAt
+
+  messages ChatMessage[]
+
+  @@unique([parentId, playerId])
+  @@index([parentId])
+}
+
+model ChatMessage {
+  id             String   @id
+  conversationId String
+  senderType    String
+  senderId      String
+  text          String
+  createdAt     DateTime @default(now())
+  readAt        DateTime?
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])
+}
+
+model CoachMarkConversation {
+  id        String   @id @default(cuid())
+  parentId  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages CoachMarkMessage[]
+
+  @@index([parentId])
+}
+
+model CoachMarkMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderType     String
+  senderId       String?
+  text           String
+  createdAt      DateTime @default(now())
+
+  conversation CoachMarkConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])
+}
