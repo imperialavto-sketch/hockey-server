@@ -150,13 +150,20 @@ function normalizePhone(phone) {
 }
 
 // --- AUTH ---
-app.post("/api/parent/mobile/auth/request-code", async (req, res) => {
+const isDevAuth = process.env.NODE_ENV !== "production";
+
+async function handleRequestCode(req, res) {
   try {
     const { phone } = req.body || {};
 
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: "Введите номер телефона" });
+    }
+
+    if (isDevAuth) {
+      console.log("[hockey-server][request-code] dev mode, phone:", normalizedPhone, "code: 1234");
+      return res.json({ ok: true, success: true, debugCode: "1234" });
     }
 
     const code = String(require("crypto").randomInt(1000, 10000)); // 4-digit, never "0000"
@@ -187,16 +194,15 @@ app.post("/api/parent/mobile/auth/request-code", async (req, res) => {
     }
 
     console.log("[hockey-server][request-code] phone:", normalizedPhone);
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[hockey-server][request-code] code:", code);
-      return res.json({ ok: true, debugCode: code });
-    }
     return res.json({ ok: true });
   } catch (err) {
     console.error("[hockey-server][request-code] error:", err);
     return res.status(500).json({ error: "Не удалось отправить код" });
   }
-});
+}
+
+app.post("/api/parent/mobile/auth/request-code", handleRequestCode);
+app.post("/api/parent/mobile/auth/send-code", handleRequestCode);
 
 app.post("/api/parent/mobile/auth/verify", async (req, res) => {
   try {
@@ -212,8 +218,54 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     }
 
     const normalizedCode = String(code).trim();
-    const now = new Date();
 
+    if (isDevAuth && normalizedCode === "1234") {
+      let resolvedParent = await prisma.parent.findFirst({
+        where: { phone: normalizedPhone },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!resolvedParent) {
+        resolvedParent = await prisma.parent.upsert({
+          where: { phone: normalizedPhone },
+          update: {},
+          create: {
+            id: `parent-${normalizedPhone}`,
+            phone: normalizedPhone,
+            name: "Parent",
+          },
+        });
+        const existingPlayer = await prisma.player.findFirst({
+          where: { parentId: resolvedParent.id },
+        });
+        if (!existingPlayer) {
+          await prisma.player.create({
+            data: {
+              id: `player-${normalizedPhone}`,
+              parentId: resolvedParent.id,
+              name: "Голыш Марк",
+              position: "Forward",
+              team: "Hockey ID",
+              age: 12,
+              games: 60,
+              goals: 22,
+              assists: 38,
+              points: 60,
+            },
+          });
+        }
+      }
+      const token = `dev-token-parent-${normalizedPhone}`;
+      const user = {
+        id: resolvedParent.id,
+        phone: resolvedParent.phone ?? normalizedPhone,
+        name: resolvedParent.name ?? null,
+        role: "PARENT",
+        email: null,
+      };
+      return res.json({ token, user, parent: { id: resolvedParent.id, phone: resolvedParent.phone ?? normalizedPhone } });
+    }
+
+    const now = new Date();
     const authRecord = await prisma.parentAuthCode.findFirst({
       where: {
         phone: normalizedPhone,
