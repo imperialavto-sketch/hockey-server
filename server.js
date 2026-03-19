@@ -150,7 +150,7 @@ function normalizePhone(phone) {
 }
 
 // --- AUTH ---
-const isDevAuth = process.env.NODE_ENV !== "production";
+const isDevAuth = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH === "true";
 
 async function handleRequestCode(req, res) {
   try {
@@ -161,6 +161,7 @@ async function handleRequestCode(req, res) {
       return res.status(400).json({ error: "Введите номер телефона" });
     }
 
+    // Dev auth: never touch SMS, return immediately
     if (isDevAuth) {
       console.log("[hockey-server][request-code] dev mode, phone:", normalizedPhone, "code: 1234");
       return res.json({ ok: true, success: true, debugCode: "1234" });
