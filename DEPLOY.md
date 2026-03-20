@@ -11,9 +11,10 @@ Deploy на VPS / Render / Railway / Fly.io. OpenAI API работает из п
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `ALLOWED_ORIGINS` | production | CORS origins через запятую |
 | `OPENAI_API_KEY` | for AI | OpenAI API key (Coach Mark) |
-| `SMS_PROVIDER` | for SMS | `smsru` или `mock` |
-| `SMS_API_KEY` | for SMS | sms.ru api_id |
-| `SMS_SENDER` | no | Отправитель (опционально) |
+| `DEV_AUTH` | no | `true` = dev mode, debugCode "1234", no SMS |
+| `SMSC_LOGIN` | for SMS | smsc.ru login |
+| `SMSC_PASSWORD` | for SMS | smsc.ru password |
+| `SMSC_SENDER` | no | smsc.ru sender (e.g. "Hockey ID") |
 
 ## Install
 

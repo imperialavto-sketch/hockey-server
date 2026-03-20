@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const prisma = require("./lib/prisma");
-const { sendSmsCode } = require("./services/sms");
+const { sendSmsCode, checkSmscStatus } = require("./services/sms");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,6 +20,13 @@ if (isProduction) {
   app.use(cors());
 }
 app.use(express.json());
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    console.error("[json-parse-error]", err.message);
+    return res.status(400).json({ error: "Invalid JSON body" });
+  }
+  next(err);
+});
 
 // --- AUTH HELPERS (DEV) ---
 function getBearerToken(req) {
@@ -153,8 +160,7 @@ function normalizePhone(phone) {
 const isDevAuth = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH === "true";
 
 async function handleRequestCode(req, res) {
-  const isDevAuthSend = process.env.DEV_AUTH === "true" || process.env.NODE_ENV !== "production";
-  if (isDevAuthSend) {
+  if (process.env.DEV_AUTH === "true") {
     return res.json({ ok: true, success: true, debugCode: "1234" });
   }
 
@@ -187,14 +193,16 @@ async function handleRequestCode(req, res) {
       },
     });
 
+    console.log("[hockey-server][request-code] calling sendSmsCode - phone:", normalizedPhone);
     const smsResult = await sendSmsCode(normalizedPhone, code);
+    console.log("[hockey-server][request-code] sendSmsCode returned - ok:", smsResult.ok, "smscId:", smsResult.smscId);
     if (!smsResult.ok) {
-      console.error("[hockey-server][request-code] SMS send failed:", smsResult.error);
-      return res.status(500).json({ error: "Не удалось отправить код" });
+      console.error("[hockey-server][request-code] SMS send FAILED - phone:", normalizedPhone, "reason:", smsResult.error);
+      return res.status(500).json({ error: smsResult.error || "Не удалось отправить код" });
     }
 
-    console.log("[hockey-server][request-code] phone:", normalizedPhone);
-    return res.json({ ok: true });
+    console.log("[hockey-server][request-code] SMS send OK - phone:", normalizedPhone);
+    return res.json({ ok: true, success: true });
   } catch (err) {
     console.error("[hockey-server][request-code] error:", err);
     return res.status(500).json({ error: "Не удалось отправить код" });
@@ -205,35 +213,53 @@ app.post("/api/parent/mobile/auth/request-code", handleRequestCode);
 app.post("/api/parent/mobile/auth/send-code", handleRequestCode);
 
 app.post("/api/parent/mobile/auth/verify", async (req, res) => {
-  const { phone, code } = req.body || {};
+  try {
+    const body = req.body || {};
+    const phone = body.phone ?? body.phoneNumber ?? body.mobile;
+    const code = body.code ?? body.verificationCode ?? body.otp ?? body.smsCode;
 
-  const normalizedCode = code != null ? String(code).trim() : "";
-  if (normalizedCode === "1234") {
-    const normalizedPhone = normalizePhone(phone) || "0";
-    const parentId = `parent-${normalizedPhone}`;
+    console.log("[verify] REQUEST body keys:", Object.keys(body), "| phone present:", !!phone, "| code present:", !!code, "| DEV_AUTH:", process.env.DEV_AUTH, "| NODE_ENV:", process.env.NODE_ENV);
 
-    let parent = await prisma.parent.findUnique({
-      where: { id: parentId },
-    });
+    const normalizedCode = code != null ? String(code).trim() : "";
+    if (normalizedCode === "1234") {
+      const normalizedPhone = normalizePhone(phone) || "0";
+      const parentId = `parent-${normalizedPhone}`;
 
-    if (!parent) {
-      parent = await prisma.parent.create({
-        data: {
-          id: parentId,
-          phone: normalizedPhone,
-        },
-      });
+      try {
+        console.log("[verify] BEFORE prisma findUnique - parentId:", parentId);
+        let parent = await prisma.parent.findUnique({ where: { id: parentId } });
+        console.log("[verify] AFTER prisma findUnique - found:", !!parent);
+
+        if (!parent) {
+          console.log("[verify] BEFORE prisma create");
+          parent = await prisma.parent.create({
+            data: { id: parentId, phone: normalizedPhone },
+          });
+          console.log("[verify] AFTER prisma create - id:", parent?.id);
+        }
+
+        const parentSafe = parent ? { id: parent.id, phone: parent.phone ?? normalizedPhone, name: parent.name ?? null } : { id: parentId, phone: normalizedPhone, name: null };
+        const successPayload = {
+          ok: true,
+          token: `dev-token-${parentId}`,
+          user: { id: parentId, role: "parent" },
+          parent: parentSafe,
+        };
+        console.log("[verify] SUCCESS response keys:", Object.keys(successPayload));
+        return res.json(successPayload);
+      } catch (dbErr) {
+        console.error("[verify] ERROR (dev 1234) - message:", dbErr?.message, "| stack:", dbErr?.stack?.slice(0, 300));
+        const fallbackPayload = {
+          ok: true,
+          token: `dev-token-${parentId}`,
+          user: { id: parentId, role: "parent" },
+          parent: { id: parentId, phone: normalizedPhone, name: null },
+        };
+        console.log("[verify] DB fallback - returning success without persist");
+        return res.json(fallbackPayload);
+      }
     }
 
-    return res.json({
-      ok: true,
-      token: `dev-token-${parentId}`,
-      user: { id: parentId, role: "parent" },
-      parent,
-    });
-  }
-
-  try {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: "Введите номер телефона" });
@@ -252,6 +278,7 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     });
 
     if (!authRecord || authRecord.expiresAt < now) {
+      console.log("[verify] fail - invalid or expired code for phone:", normalizedPhone);
       return res.status(401).json({ error: "Invalid or expired code" });
     }
 
@@ -320,9 +347,15 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     };
 
     const token = `dev-token-parent-${normalizedPhone}`;
-    return res.json({ user, token });
+    const parentSafe = { id: resolvedParent.id, phone: resolvedParent.phone ?? normalizedPhone, name: resolvedParent.name ?? null };
+    console.log("[verify] SUCCESS (production) - parentId:", resolvedParent.id);
+    return res.json({ ok: true, user, token, parent: parentSafe });
   } catch (err) {
-    console.error("[verify] error:", err?.message ?? String(err));
+    console.error("[verify] ERROR - message:", err?.message, "| stack:", err?.stack?.slice(0, 400));
+    if (res.headersSent) {
+      console.error("[verify] headers already sent, cannot send JSON error");
+      return;
+    }
     return res.status(500).json({ error: "Не удалось выполнить вход" });
   }
 });
@@ -345,6 +378,16 @@ app.post("/api/parent/mobile/auth/logout", async (req, res) => {
 });
 
 // --- DEBUG ---
+app.get("/api/debug/smsc-status", async (req, res) => {
+  const phone = req.query.phone;
+  const id = req.query.id;
+  if (!phone || !id) {
+    return res.status(400).json({ error: "phone and id query params required" });
+  }
+  const result = await checkSmscStatus(phone, id);
+  return res.json(result);
+});
+
 app.get("/api/debug/routes-check", (_req, res) => {
   res.json({
     ok: true,
@@ -1714,6 +1757,20 @@ app.get("/api/health", (_req, res) => {
 // --- ROOT ---
 app.get("/", (_req, res) => {
   res.json({ ok: true, message: "hockey-server" });
+});
+
+// --- 404: return JSON so frontend doesn't get HTML on wrong path
+app.use((req, res) => {
+  console.log("[404]", req.method, req.path);
+  res.status(404).json({ error: "Not found", path: req.path });
+});
+
+// --- Error handler: always return JSON (no HTML)
+app.use((err, req, res, _next) => {
+  console.error("[express-error]", err?.message ?? err, "| stack:", err?.stack?.slice(0, 300));
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Не удалось выполнить вход" });
+  }
 });
 
 const HOST = process.env.HOST || "0.0.0.0";
