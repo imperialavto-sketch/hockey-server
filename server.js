@@ -138,7 +138,7 @@ function buildPlayerResponseBody(basePlayer, stats) {
     teamId,
     age: basePlayer.age,
     birthYear: null,
-    avatar: null,
+    avatarUrl: basePlayer.avatarUrl ?? null,
     number: null,
     shoots: null,
     height: null,
@@ -161,6 +161,10 @@ const isDevAuth = process.env.NODE_ENV !== "production" || process.env.DEV_AUTH 
 
 async function handleRequestCode(req, res) {
   if (process.env.DEV_AUTH === "true") {
+    const body = req.body || {};
+    const phoneRaw = body.phone ?? body.phoneNumber ?? body.mobile;
+    const phone = normalizePhone(phoneRaw);
+    console.log("[auth][request-code] dev mode phone:", phone || "(empty)");
     return res.json({ ok: true, success: true, debugCode: "1234" });
   }
 
@@ -212,7 +216,7 @@ async function handleRequestCode(req, res) {
 app.post("/api/parent/mobile/auth/request-code", handleRequestCode);
 app.post("/api/parent/mobile/auth/send-code", handleRequestCode);
 
-app.post("/api/parent/mobile/auth/verify", async (req, res) => {
+const handleVerify = async (req, res) => {
   try {
     const body = req.body || {};
     const phone = body.phone ?? body.phoneNumber ?? body.mobile;
@@ -223,6 +227,7 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     const normalizedCode = code != null ? String(code).trim() : "";
     if (normalizedCode === "1234") {
       const normalizedPhone = normalizePhone(phone) || "0";
+      console.log("[auth][verify-code] dev mode phone:", normalizedPhone, "| code: 1234");
       const parentId = `parent-${normalizedPhone}`;
 
       try {
@@ -245,7 +250,7 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
           user: { id: parentId, role: "parent" },
           parent: parentSafe,
         };
-        console.log("[verify] SUCCESS response keys:", Object.keys(successPayload));
+        console.log("[auth][verify] issued token:", successPayload.token, "| phone:", normalizedPhone);
         return res.json(successPayload);
       } catch (dbErr) {
         console.error("[verify] ERROR (dev 1234) - message:", dbErr?.message, "| stack:", dbErr?.stack?.slice(0, 300));
@@ -255,7 +260,7 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
           user: { id: parentId, role: "parent" },
           parent: { id: parentId, phone: normalizedPhone, name: null },
         };
-        console.log("[verify] DB fallback - returning success without persist");
+        console.log("[auth][verify] DB fallback - issued token:", fallbackPayload.token);
         return res.json(fallbackPayload);
       }
     }
@@ -358,7 +363,10 @@ app.post("/api/parent/mobile/auth/verify", async (req, res) => {
     }
     return res.status(500).json({ error: "Не удалось выполнить вход" });
   }
-});
+};
+
+app.post("/api/parent/mobile/auth/verify", handleVerify);
+app.post("/api/parent/mobile/auth/verify-code", handleVerify);
 
 app.post("/api/parent/mobile/auth/logout", async (req, res) => {
   const bearerToken = getBearerToken(req);
@@ -748,38 +756,63 @@ app.get("/api/db/health", async (_req, res) => {
 });
 
 // --- ME PLAYERS ---
-const DEV_TOKEN_7911 = "dev-token-parent-79119888885";
-const DEV_PLAYER = {
-  id: "player_1",
-  name: "Голыш Марк",
-  age: 10,
-  position: "Нападающий",
-  number: 93,
-  parentId: "parent-79119888885",
-};
-const DEV_PLAYER_DETAIL = {
-  id: "player_1",
-  name: "Голыш Марк",
-  age: 10,
-  position: "Нападающий",
-  number: 93,
-  team: "Hockey ID Team",
-  stats: { games: 60, goals: 22, assists: 38, points: 60 },
-  games: 60,
-  goals: 22,
-  assists: 38,
-  points: 60,
-  parentId: "parent-79119888885",
-};
+function getDevParentIdFromToken(token) {
+  const phone = getPhoneFromDevToken(token);
+  return phone ? `parent-${phone}` : null;
+}
+
+const DEV_PLAYER_FALLBACK = buildPlayerResponseBody(
+  { id: "player_1", name: "Голыш Марк", position: "Нападающий", team: "Hockey ID", age: 10 },
+  DEFAULT_PLAYER_STATS
+);
+const DEV_PLAYER_DETAIL_FALLBACK = buildPlayerResponseBody(
+  { id: "player_1", name: "Голыш Марк", position: "Нападающий", team: "Hockey ID Team", age: 10 },
+  DEFAULT_PLAYER_STATS
+);
+
+function mapDbPlayerToResponse(p) {
+  const statsFromPlayer =
+    p?.stats && typeof p.stats === "object" && !Array.isArray(p.stats)
+      ? p.stats
+      : { games: p?.games, goals: p?.goals, assists: p?.assists, points: p?.points };
+  const stats = normalizeStats(statsFromPlayer, DEFAULT_PLAYER_STATS);
+  return buildPlayerResponseBody(
+    {
+      id: p.id,
+      name: p.name,
+      position: p.position ?? null,
+      team: p.team ?? "Hockey ID",
+      age: p.age ?? null,
+      avatarUrl: p.avatarUrl ?? null,
+    },
+    stats
+  );
+}
 
 app.get("/api/me/players", requireBearerAuth, async (req, res) => {
   const token = getBearerToken(req);
-  console.log("[/api/me/players] token:", token ? `${token.slice(0, 20)}...` : "(none)");
+  console.log("[/api/me/players] token:", token ? `${token.slice(0, 24)}...` : "(none)");
 
-  if (token === DEV_TOKEN_7911) {
-    return res.json([DEV_PLAYER]);
+  const devParentId = getDevParentIdFromToken(token);
+  if (devParentId) {
+    try {
+      const players = await prisma.player.findMany({
+        where: { parentId: devParentId },
+        orderBy: { createdAt: "desc" },
+      });
+      if (Array.isArray(players) && players.length > 0) {
+        const body = players.map(mapDbPlayerToResponse);
+        console.log("[/api/me/players] source: db | count:", body.length, "| parentId:", devParentId);
+        return res.json(body);
+      }
+      console.log("[/api/me/players] source: fallback | parentId:", devParentId);
+      return res.json([DEV_PLAYER_FALLBACK]);
+    } catch (err) {
+      console.error("[/api/me/players] db error:", err?.message);
+      console.log("[/api/me/players] source: fallback (error) | parentId:", devParentId);
+      return res.json([DEV_PLAYER_FALLBACK]);
+    }
   }
-  return res.json([]);
 
   try {
     const parent = await getParentFromAuth(req);
@@ -799,6 +832,7 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
     });
 
     if (!Array.isArray(players) || players.length === 0) {
+      console.log("[/api/me/players] source: fallback | parentId:", parent.id);
       const devFallbackPlayer = buildPlayerResponseBody(
         {
           id: "player_dev_1",
@@ -812,6 +846,7 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
       return res.json([devFallbackPlayer]);
     }
 
+    console.log("[/api/me/players] source: db | count:", players.length, "| parentId:", parent.id);
     return res.json(
       players.map((p) => {
         const basePlayer = {
@@ -820,6 +855,7 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
           position: p.position ?? null,
           team: p.team ?? "Hockey ID",
           age: p.age ?? null,
+          avatarUrl: p.avatarUrl ?? null,
         };
 
         const statsFromPlayer =
@@ -849,15 +885,33 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
 app.get("/api/me/players/:id", requireBearerAuth, async (req, res) => {
   const token = getBearerToken(req);
   const playerId = req.params?.id;
-  console.log("[/api/me/players/:id] token:", token ? `${String(token).slice(0, 20)}...` : "(none)", "playerId:", playerId);
+  console.log("[/api/me/players/:id] token:", token ? `${String(token).slice(0, 24)}...` : "(none)", "playerId:", playerId);
 
-  if (token !== DEV_TOKEN_7911) {
-    return res.status(404).json({ error: "Игрок не найден" });
+  const devParentId = getDevParentIdFromToken(token);
+  if (devParentId) {
+    try {
+      const player = await prisma.player.findFirst({
+        where: { id: playerId, parentId: devParentId },
+      });
+      if (player) {
+        const body = mapDbPlayerToResponse(player);
+        console.log("[/api/me/players/:id] source: db | playerId:", playerId, "| parentId:", devParentId);
+        return res.json(body);
+      }
+      if (playerId === "player_1") {
+        console.log("[/api/me/players/:id] source: fallback | playerId:", playerId, "| parentId:", devParentId);
+        return res.json(DEV_PLAYER_DETAIL_FALLBACK);
+      }
+      return res.status(404).json({ error: "Игрок не найден" });
+    } catch (err) {
+      console.error("[/api/me/players/:id] db error:", err?.message);
+      if (playerId === "player_1") {
+        console.log("[/api/me/players/:id] source: fallback (error) | playerId:", playerId);
+        return res.json(DEV_PLAYER_DETAIL_FALLBACK);
+      }
+      return res.status(404).json({ error: "Игрок не найден" });
+    }
   }
-  if (playerId !== "player_1") {
-    return res.status(404).json({ error: "Игрок не найден" });
-  }
-  return res.json(DEV_PLAYER_DETAIL);
 
   try {
     const parent = await getParentFromAuth(req);
@@ -882,7 +936,11 @@ app.get("/api/me/players/:id", requireBearerAuth, async (req, res) => {
     }
 
     if (!player) {
-      return res.status(404).json({ error: "Player not found" });
+      if (playerId === "player_1") {
+        console.log("[/api/me/players/:id] source: fallback | playerId:", playerId, "| parentId:", parent.id);
+        return res.json(DEV_PLAYER_DETAIL_FALLBACK);
+      }
+      return res.status(404).json({ error: "Игрок не найден" });
     }
 
     const statsFromPlayer =
@@ -908,11 +966,12 @@ app.get("/api/me/players/:id", requireBearerAuth, async (req, res) => {
         position: player.position ?? null,
         team: player.team ?? "Hockey ID",
         age: player.age ?? null,
+        avatarUrl: player.avatarUrl ?? null,
       },
       stats
     );
 
-    console.log("[/api/me/players/:id] response", JSON.stringify(responseBody));
+    console.log("[/api/me/players/:id] source: db | playerId:", playerId, "| parentId:", parent.id);
     return res.json(responseBody);
   } catch (err) {
     console.error("[/api/me/players/:id] error:", err);

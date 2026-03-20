@@ -32,6 +32,7 @@ model Player {
   position  String?
   team      String?
   age       Int?
+  avatarUrl String?
   games     Int?
   goals     Int?
   assists   Int?

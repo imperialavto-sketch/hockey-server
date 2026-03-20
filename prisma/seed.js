@@ -366,30 +366,28 @@ async function main() {
 
   async function seedChat() {
     const parentId = "parent-79990001122";
-    const playerId = "player_1_real";
+    const playerId = "player-79990001122";
 
     const player = await prisma.player.findFirst({ where: { id: playerId, parentId } });
     if (!player) return;
 
-    const conversation = await prisma.chatConversation.findFirst({
-      where: { parentId, playerId },
+    const conversationId = "conv_seed_79990001122";
+    await prisma.chatConversation.upsert({
+      where: { parentId_playerId: { parentId, playerId } },
+      create: {
+        id: conversationId,
+        playerId: player.id,
+        playerName: player.name,
+        coachId: "coach_default",
+        coachName: "Тренер команды",
+        parentId,
+        lastMessage: null,
+      },
+      update: {
+        playerId: player.id,
+        playerName: player.name,
+      },
     });
-
-    let conversationId = conversation?.id;
-    if (!conversation) {
-      conversationId = "conv_seed_1";
-      await prisma.chatConversation.create({
-        data: {
-          id: conversationId,
-          playerId: player.id,
-          playerName: player.name,
-          coachId: "coach_default",
-          coachName: "Тренер команды",
-          parentId,
-          lastMessage: null,
-        },
-      });
-    }
 
     const messages = [
       {
@@ -436,11 +434,19 @@ async function main() {
   });
   await seedSubscription("parent-79991112233");
 
-  // Real app login dev data (add)
+  // Dev auth flow (79119888885) — DB-first for GET /api/me/players
+  await seedParentAndPlayer({
+    parentId: "parent-79119888885",
+    phone: "79119888885",
+    playerId: "player-79119888885",
+  });
+  await seedSubscription("parent-79119888885");
+
+  // Dev auth flow (79990001122) — DB-first for GET /api/me/players
   await seedParentAndPlayer({
     parentId: "parent-79990001122",
     phone: "79990001122",
-    playerId: "player_1_real",
+    playerId: "player-79990001122",
   });
   await seedSubscription("parent-79990001122");
 
