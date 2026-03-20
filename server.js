@@ -1742,6 +1742,54 @@ app.post("/api/chat/ai/message", async (req, res) => {
 });
 
 // --- SCHEDULE (SERVER-BACKED FIRST VERSION; NO DB MODELS YET) ---
+app.get("/api/me/schedule", requireBearerAuth, async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    let parentId = getDevParentIdFromToken(token);
+    if (!parentId) {
+      const parent = await getParentFromAuth(req);
+      parentId = parent?.id ?? null;
+    }
+    if (!parentId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const players = await prisma.player.findMany({
+      where: { parentId },
+      select: { team: true },
+    });
+    const teamIds = [...new Set(
+      (players || [])
+        .map((p) => mapTeamToTeamId(p.team))
+        .filter((id) => id != null)
+    )];
+
+    if (teamIds.length === 0) {
+      console.log("[/api/me/schedule] parentId:", parentId, "no teamIds from players → []");
+      return res.json([]);
+    }
+
+    const rows = await prisma.scheduleEvent.findMany({
+      where: { teamId: { in: teamIds } },
+      orderBy: { startTime: "asc" },
+    });
+    console.log("[/api/me/schedule] parentId:", parentId, "teamIds:", teamIds.length, "events:", (rows || []).length);
+    return res.json(
+      (rows || []).map((r) => ({
+        id: r.id,
+        title: r.title ?? null,
+        startTime: r.startTime.toISOString(),
+        date: r.startTime.toISOString().slice(0, 10),
+        location: r.location ?? null,
+        teamId: r.teamId,
+      }))
+    );
+  } catch (err) {
+    console.error("[/api/me/schedule] error:", err?.message);
+    return res.json([]);
+  }
+});
+
 app.get("/api/schedule", (_req, res) => {
   // First DB-backed schedule version (response shape must stay unchanged).
   // If Prisma isn't ready for some reason, return empty list (honest failure).
