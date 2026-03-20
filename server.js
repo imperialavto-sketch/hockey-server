@@ -1480,6 +1480,19 @@ function mapCoachMarkMessage(m) {
 }
 
 app.get("/api/chat/ai/conversation", async (req, res) => {
+  const token = getBearerToken(req);
+  const parentId = req.get("x-parent-id") || req.query?.parentId || "";
+  console.log("[coach-mark] token:", token ? `${String(token).slice(0, 24)}...` : "(none)", "parentId:", parentId);
+
+  if (token && String(token).startsWith("dev-token-parent-")) {
+    const response = {
+      conversation: { id: "coach_mark_default" },
+      messages: [],
+    };
+    console.log("[coach-mark] response:", JSON.stringify(response));
+    return res.json(response);
+  }
+
   const t = traceId();
   try {
     const parent = await resolveChatParentOr401(req, res);
@@ -1514,6 +1527,15 @@ app.get("/api/chat/ai/conversation", async (req, res) => {
 });
 
 app.post("/api/chat/ai/message", async (req, res) => {
+  const token = getBearerToken(req);
+  if (token && String(token).startsWith("dev-token-parent-")) {
+    const body = req.body || {};
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    console.log("[coach-mark] POST dev token - text:", text ? `${text.slice(0, 30)}...` : "(empty)");
+    const reply = text ? `Dev reply to: ${text.slice(0, 50)}` : "Напишите ваш вопрос.";
+    return res.json({ text: reply, isAI: true });
+  }
+
   const t = traceId();
   try {
     const parent = await resolveChatParentOr401(req, res);
