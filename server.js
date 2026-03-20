@@ -1526,13 +1526,41 @@ app.get("/api/chat/ai/conversation", async (req, res) => {
   }
 });
 
+const COACH_MARK_SYSTEM_SHORT = "Ты Coach Mark — профессиональный хоккейный тренер. Ты помогаешь родителям и детям развиваться в хоккее. Отвечай понятно, поддерживающе и практично.";
+
 app.post("/api/chat/ai/message", async (req, res) => {
   const token = getBearerToken(req);
   if (token && String(token).startsWith("dev-token-parent-")) {
     const body = req.body || {};
     const text = typeof body.text === "string" ? body.text.trim() : "";
-    console.log("[coach-mark] POST dev token - text:", text ? `${text.slice(0, 30)}...` : "(empty)");
-    const reply = text ? `Dev reply to: ${text.slice(0, 50)}` : "Напишите ваш вопрос.";
+    if (!text) {
+      return res.json({ text: "Напишите ваш вопрос.", isAI: true });
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    let reply;
+    if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
+      reply = `Dev reply (no API key): ${text.slice(0, 50)}`;
+    } else {
+      try {
+        const OpenAI = require("openai");
+        const openai = new OpenAI({ apiKey: apiKey.trim(), timeout: 15000 });
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: COACH_MARK_SYSTEM_SHORT },
+            { role: "user", content: text.slice(0, 400) },
+          ],
+          max_tokens: 256,
+          temperature: 0.6,
+        });
+        reply = completion?.choices?.[0]?.message?.content?.trim() || AI_FALLBACK_ON_ERROR;
+      } catch (err) {
+        console.error("[coach-mark] OpenAI error:", err?.message ?? err);
+        reply = `Dev reply (API error): ${text.slice(0, 30)}...`;
+      }
+    }
+    console.log("[coach-mark] AI response", reply?.slice(0, 80) ?? "(empty)");
     return res.json({ text: reply, isAI: true });
   }
 
