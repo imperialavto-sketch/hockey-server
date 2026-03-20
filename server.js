@@ -748,8 +748,38 @@ app.get("/api/db/health", async (_req, res) => {
 });
 
 // --- ME PLAYERS ---
+const DEV_TOKEN_7911 = "dev-token-parent-79119888885";
+const DEV_PLAYER = {
+  id: "player_1",
+  name: "Голыш Марк",
+  age: 10,
+  position: "Нападающий",
+  number: 93,
+  parentId: "parent-79119888885",
+};
+const DEV_PLAYER_DETAIL = {
+  id: "player_1",
+  name: "Голыш Марк",
+  age: 10,
+  position: "Нападающий",
+  number: 93,
+  team: "Hockey ID Team",
+  stats: { games: 60, goals: 22, assists: 38, points: 60 },
+  games: 60,
+  goals: 22,
+  assists: 38,
+  points: 60,
+  parentId: "parent-79119888885",
+};
+
 app.get("/api/me/players", requireBearerAuth, async (req, res) => {
-  console.log("[/api/me/players] called");
+  const token = getBearerToken(req);
+  console.log("[/api/me/players] token:", token ? `${token.slice(0, 20)}...` : "(none)");
+
+  if (token === DEV_TOKEN_7911) {
+    return res.json([DEV_PLAYER]);
+  }
+  return res.json([]);
 
   try {
     const parent = await getParentFromAuth(req);
@@ -817,9 +847,17 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
 });
 
 app.get("/api/me/players/:id", requireBearerAuth, async (req, res) => {
-  console.log("[/api/me/players/:id] called", req.params.id);
-
+  const token = getBearerToken(req);
   const playerId = req.params?.id;
+  console.log("[/api/me/players/:id] token:", token ? `${String(token).slice(0, 20)}...` : "(none)", "playerId:", playerId);
+
+  if (token !== DEV_TOKEN_7911) {
+    return res.status(404).json({ error: "Игрок не найден" });
+  }
+  if (playerId !== "player_1") {
+    return res.status(404).json({ error: "Игрок не найден" });
+  }
+  return res.json(DEV_PLAYER_DETAIL);
 
   try {
     const parent = await getParentFromAuth(req);
