@@ -769,7 +769,17 @@ app.get("/api/me/players", requireBearerAuth, async (req, res) => {
     });
 
     if (!Array.isArray(players) || players.length === 0) {
-      return res.json([]);
+      const devFallbackPlayer = buildPlayerResponseBody(
+        {
+          id: "player_dev_1",
+          name: "Голыш Марк",
+          position: "Нападающий",
+          team: "Hockey ID",
+          age: 10,
+        },
+        DEFAULT_PLAYER_STATS
+      );
+      return res.json([devFallbackPlayer]);
     }
 
     return res.json(
